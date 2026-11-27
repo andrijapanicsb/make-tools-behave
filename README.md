@@ -61,13 +61,12 @@ The patch finds every backdoor I/O site in the installer's custom-action code an
 
 ## Running it
 
-> **Status:** the ready-to-run patchers (an in-guest PowerShell patcher, and a Linux/offline patcher for images and host-driven workflows) are being cleaned up for publication and land next — see [Status](#status). This section describes exactly what they do so the approach is reproducible today.
+> **Step by step, with copy-paste commands:** [docs/running.md](docs/running.md). The script: [`scripts/Fix-VMwareToolsUninstall.ps1`](scripts/Fix-VMwareToolsUninstall.ps1), run inside Windows. Optional: [`scripts/vmtfix.py`](scripts/vmtfix.py) makes the same fix from Linux, if you'd rather fix the cached `.msi` file outside the VM.
 
 ### A. In the guest — any Windows Server
 
-1. Locate the cached VMware Tools MSI (from the `UserData\Products` uninstall hive, or the product GUID).
-2. Back it up, then patch the embedded custom-action DLL streams in place (the swap in the table above).
-3. Run the normal uninstall: `MsiExec.exe /x{PRODUCT-GUID} /quiet /norestart REBOOT=ReallySuppress`.
+1. Run `Fix-VMwareToolsUninstall.ps1` as Administrator or SYSTEM. It finds the cached VMware Tools MSI, backs it up, and patches the embedded custom-action DLL streams in place (the swap in the table above). Use `-DryRun` first to see what it would change.
+2. Run the normal uninstall: `MsiExec.exe /x{PRODUCT-GUID} /quiet /norestart REBOOT=ReallySuppress`.
 
 The removal now completes on the **first** attempt, including on Server 2019 where it previously died with `1603`.
 
@@ -76,14 +75,15 @@ The removal now completes on the **first** attempt, including on Server 2019 whe
 If you migrated the VM yourself, you already own a credential-free, SYSTEM-level channel into it: the **QEMU guest agent** (`qemu-ga`), installed during conversion. You can apply the fix and remove Tools without ever logging into the guest:
 
 ```
-# fix-and-remove.ps1 = the in-guest patcher + uninstall (see Status, landing next)
-# push it into the guest and run as SYSTEM, no guest credentials:
-qm guest exec <vmid> -- powershell.exe -NoProfile -NonInteractive -File C:\Windows\Temp\fix-and-remove.ps1
+# Proxmox: copy the patcher into the guest, then run it as SYSTEM, no guest credentials
+pvesh create /nodes/$(hostname)/qemu/<vmid>/agent/file-write --file 'C:\Windows\Temp\Fix-VMwareToolsUninstall.ps1' --content "$(cat scripts/Fix-VMwareToolsUninstall.ps1)"
+qm guest exec <vmid> --timeout 300 -- powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'C:\Windows\Temp\Fix-VMwareToolsUninstall.ps1'
 ```
+
+The libvirt (`virsh`) version, and the uninstall step, are in [docs/running.md](docs/running.md#2-from-the-kvm-host-with-no-guest-login-qemu-guest-agent).
 
 The guest agent is **not** torn down by the Tools uninstaller (unlike VMware's own channel, which stops its service mid-removal), so it is a reliable place to drive this from. Everything it does is logged in the guest. This is a management agent you installed on a host you control — see [Scope & safety](#scope--safety).
 
-A high-level `qemu-ga` recipe (push a script in base64 chunks, verify its hash in-guest, execute, read results back) is the same pattern any migration tool already uses for first-boot steps.
 
 ---
 
@@ -115,9 +115,9 @@ The same unguarded backdoor call is present across **VMware Tools 10.3 through 1
 
 - ✅ Root-cause write-up — [docs/the-vmware-backdoor.md](docs/the-vmware-backdoor.md)
 - ✅ Backdoor proof-of-concept — [examples/backdoor-poc.ps1](examples/backdoor-poc.ps1)
-- ⏳ In-guest PowerShell patcher — *landing next*
-- ⏳ Linux / offline patcher (for images and host-driven `qemu-ga` workflows) — *landing next*
-- ⏳ Per-OS run notes and a copy-paste `qemu-ga` recipe — *landing next*
+- ✅ In-guest PowerShell patcher — [scripts/Fix-VMwareToolsUninstall.ps1](scripts/Fix-VMwareToolsUninstall.ps1)
+- ✅ Optional: the same fix from Linux, on the cached `.msi` copied out of the VM — [scripts/vmtfix.py](scripts/vmtfix.py)
+- ✅ How to run it, in the guest or from the KVM host through `qemu-ga` — [docs/running.md](docs/running.md)
 
 ---
 
